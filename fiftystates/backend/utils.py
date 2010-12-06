@@ -2,22 +2,14 @@ import os
 import re
 import time
 import json
+import logging
 import datetime
 
-from fiftystates.backend import db
+from pymongo.son import SON
 
-import argparse
+from fiftystates.backend import db, fs
+
 import name_tools
-
-base_arg_parser = argparse.ArgumentParser(add_help=False)
-base_arg_parser.add_argument('state', type=str,
-                             help=('the two-letter abbreviation of the '
-                                   'state to import'))
-base_arg_parser.add_argument('-v', '--verbose', action='count',
-                             dest='verbose', default=False,
-                             help=("be verbose (use multiple times for "
-                                   "more debugging information)"))
-
 
 def _get_property_dict(schema):
     """ given a schema object produce a nested dictionary of fields """
@@ -30,11 +22,12 @@ def _get_property_dict(schema):
 
 # load standard fields from schema files
 standard_fields = {}
-for _type in ('bill', 'person', 'committee', 'metadata', 'vote'):
+for _type in ('bill', 'person', 'committee', 'metadata', 'vote', 'event'):
     fname = os.path.join(os.path.split(__file__)[0],
                          '../../schemas/%s.json' % _type)
     schema = json.load(open(fname))
     standard_fields[_type] = _get_property_dict(schema)
+
 
 def insert_with_id(obj):
     """
@@ -102,7 +95,7 @@ def update(old, new, coll):
             changed = True
 
     if changed:
-        old['updated_at'] = datetime.datetime.now()
+        old['updated_at'] = datetime.datetime.utcnow()
         coll.save(old, safe=True)
 
 
@@ -111,36 +104,22 @@ def convert_timestamps(obj):
     Convert unix timestamps in the scraper output to python datetimes
     so that they will be saved properly as Mongo datetimes.
     """
-    for source in obj.get('sources', []):
-        source['retrieved'] = timestamp_to_dt(source['retrieved'])
+    for key in ('date', 'when', 'end', 'start_date', 'end_date',
+                'retrieved'):
+        value = obj.get(key)
+        if value:
+            obj[key] = timestamp_to_dt(value)
 
-    for action in obj.get('actions', []):
-        action['date'] = timestamp_to_dt(action['date'])
-
-    for role in obj.get('roles', []):
-        if role['start_date']:
-            role['start_date'] = timestamp_to_dt(role['start_date'])
-
-        if role['end_date']:
-            role['end_date'] = timestamp_to_dt(role['end_date'])
-
-        role['state'] = obj['state']
-
-    for vote in obj.get('votes', []):
-        vote['date'] = timestamp_to_dt(vote['date'])
-
-        for source in vote.get('sources', []):
-            source['retrieved'] = timestamp_to_dt(source['retrieved'])
+    for key in ('sources', 'actions', 'votes'):
+        for child in obj.get(key, []):
+            convert_timestamps(child)
 
     for details in obj.get('session_details', {}).values():
-        if 'start_date' in details:
-            details['start_date'] = timestamp_to_dt(details['start_date'])
+        convert_timestamps(details)
 
-        if 'end_date' in details:
-            details['end_date'] = timestamp_to_dt(details['end_date'])
-
-    if 'date' in obj:
-        obj['date'] = timestamp_to_dt(obj['date'])
+    for role in obj.get('roles', []):
+        convert_timestamps(role)
+        role['state'] = obj['state']
 
     return obj
 
@@ -160,6 +139,7 @@ def split_name(obj):
 
     return obj
 
+
 def _make_plus_helper(obj, fields):
     """ add a + prefix to any fields in obj that aren't in fields """
     new_obj = {}
@@ -178,6 +158,7 @@ def _make_plus_helper(obj, fields):
             new_obj['+%s' % key] = value
 
     return new_obj
+
 
 def make_plus_fields(obj):
     """
@@ -227,3 +208,21 @@ def get_committee_id(state, chamber, committee):
         __committee_ids[key] = None
 
     return __committee_ids[key]
+
+
+def put_document(doc, content_type, metadata):
+    # Generate a new sequential ID for the document
+    query = SON([('_id', metadata['bill']['state'])])
+    update = SON([('$inc', SON([('seq', 1)]))])
+    seq = db.command(SON([('findandmodify', 'doc_ids'),
+                          ('query', query),
+                          ('update', update),
+                          ('new', True),
+                          ('upsert', True)]))['value']['seq']
+
+    id = "%sD%08d" % (metadata['bill']['state'].upper(), seq)
+    logging.info("Saving as %s" % id)
+
+    fs.put(doc, _id=id, content_type=content_type, metadata=metadata)
+
+    return id

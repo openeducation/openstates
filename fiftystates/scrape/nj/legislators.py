@@ -44,7 +44,7 @@ class NJLegislatorScraper(LegislatorScraper):
             full_name = full_name.replace('  ', ' ')
             full_name = full_name[0: len(full_name) - 1]
             
-            district = rec["district"]
+            district = int(rec["district"])
             party = rec["party"]
             if party == 'R':
                 party = "Republican"
@@ -67,6 +67,11 @@ class NJLegislatorScraper(LegislatorScraper):
             zipcode = rec["zipcode"]
             phone = rec["phone"]
 
-            leg = Legislator(term_name, chamber, str(district), full_name, first_name, last_name, middle_name, party, title = title, legal_position = legal_position, leg_status = leg_status, address = address, city = city, state = state, zipcode = zipcode, phone = phone)
+            leg = Legislator(term_name, chamber, str(district), full_name,
+                             first_name, last_name, middle_name, party,
+                             suffixes=suffix, title=title,
+                             legal_position=legal_position,
+                             leg_status=leg_status, address=address, city=city,
+                             state=state, zipcode=zipcode, phone=phone)
             leg.add_source(file_url)
             self.save_legislator(leg)

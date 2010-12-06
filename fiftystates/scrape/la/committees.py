@@ -35,6 +35,8 @@ class LACommitteeScraper(CommitteeScraper):
         url = url.replace('Default.asp', 'Assignments.asp')
 
         committee = Committee('upper', name)
+        committee.add_source(url)
+
         with self.urlopen(url) as text:
             page = lxml.html.fromstring(text)
 
@@ -65,7 +67,8 @@ class LACommitteeScraper(CommitteeScraper):
                 font = cells[1].xpath('font')[0]
                 committees = []
 
-                committees.append(font.text.strip())
+                if font.text:
+                    committees.append(font.text.strip())
                 for br in font.xpath('br'):
                     if br.text:
                         committees.append(br.text.strip())
@@ -96,6 +99,7 @@ class LACommitteeScraper(CommitteeScraper):
                         committee = comm_cache[comm_name]
                     except KeyError:
                         committee = Committee(chamber, comm_name)
+                        committee.add_source(url)
                         comm_cache[comm_name] = committee
 
                     committee.add_member(name, mtype)

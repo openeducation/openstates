@@ -42,6 +42,8 @@ class TXBillScraper(BillScraper):
             bill.add_source(url)
 
             versions_url = url.replace('billhistory', 'billtext/html')
+            # URLs for versions inexplicably (H|S)(J|C) instead of (H|J)(CR|JR)
+            versions_url = versions_url.replace('JR', 'J').replace('CR', 'C')
             versions_url = '/'.join(versions_url.split('/')[0:-1])
 
             bill_prefix = bill['bill_id'].split()[0]
@@ -86,7 +88,7 @@ class TXBillScraper(BillScraper):
 
         for action in root.findall('actions/action'):
             act_date = dt.datetime.strptime(action.findtext('date'),
-                                            "%m/%d/%Y")
+                                            "%m/%d/%Y").date()
 
             extra = {}
             extra['action_number'] = action.find('actionNumber').text
@@ -108,15 +110,16 @@ class TXBillScraper(BillScraper):
                 type = 'amendment:amended'
             elif desc == 'Amendment withdrawn':
                 type = 'amendment:withdrawn'
-            elif desc.startswith('Received by the Secretary of'):
-                type = 'bill:introduced'
             elif desc == 'Passed':
                 type = 'bill:passed'
             elif desc.startswith('Received from the'):
                 type = 'bill:introduced'
+            elif desc.startswith('Sent to the Governor'):
+                # But what if it gets lost in the mail?
+                type = 'governor:received'
             elif desc.startswith('Signed by the Governor'):
                 type = 'governor:signed'
-            elif desc == 'Filed':
+            elif desc == 'Read first time':
                 type = 'bill:introduced'
             else:
                 type = 'other'

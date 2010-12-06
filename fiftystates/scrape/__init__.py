@@ -6,6 +6,7 @@ import urllib2
 import datetime
 import contextlib
 from optparse import make_option, OptionParser
+from collections import defaultdict
 
 from fiftystates.scrape.validator import DatetimeValidator
 
@@ -42,15 +43,33 @@ class JSONDateEncoder(json.JSONEncoder):
     JSONEncoder that encodes datetime objects as Unix timestamps.
     """
     def default(self, obj):
-        if (isinstance(obj, datetime.datetime) or
-            isinstance(obj, datetime.date)):
-
+        if isinstance(obj, datetime.datetime):
+            return time.mktime(obj.utctimetuple())
+        elif isinstance(obj, datetime.date):
             return time.mktime(obj.timetuple())
 
         return json.JSONEncoder.default(self, obj)
 
+_scraper_registry = defaultdict(dict)
+
+class ScraperMeta(type):
+    """ register derived scrapers in a central registry """
+
+    def __new__(meta, classname, bases, classdict):
+        cls = type.__new__(meta, classname, bases, classdict)
+
+        state = getattr(cls, 'state', None)
+        scraper_type = getattr(cls, 'scraper_type', None)
+
+        if state and scraper_type:
+            _scraper_registry[state][scraper_type] = cls
+
+        return cls
+
 
 class Scraper(scrapelib.Scraper):
+
+    __metaclass__ = ScraperMeta
 
     def __init__(self, metadata, no_cache=False, output_dir=None,
                  strict_validation=None, **kwargs):
@@ -80,6 +99,16 @@ class Scraper(scrapelib.Scraper):
 
         if 'requests_per_minute' not in kwargs:
             kwargs['requests_per_minute'] = None
+
+        if 'retry_attempts' not in kwargs:
+            kwargs['retry_attempts'] = getattr(settings,
+                                               'SCRAPELIB_RETRY_ATTEMPTS',
+                                               3)
+
+        if 'retry_wait_seconds' not in kwargs:
+            kwargs['retry_wait_seconds'] = getattr(settings,
+                                               'SCRAPELIB_RETRY_WAIT_SECONDS',
+                                                10)
 
         super(Scraper, self).__init__(**kwargs)
 
@@ -143,5 +172,5 @@ class FiftystatesObject(dict):
 
         :param url: the location of the source
         """
-        retrieved = retrieved or datetime.datetime.now()
+        retrieved = retrieved or datetime.datetime.utcnow()
         self['sources'].append(dict(url=url, retrieved=retrieved, **kwargs))

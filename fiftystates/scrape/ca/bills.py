@@ -9,9 +9,20 @@ from fiftystates.scrape.ca.models import CABill, CABillVersion
 from sqlalchemy.orm import sessionmaker, relation, backref
 from sqlalchemy import create_engine
 
+import pytz
+
+
+def clean_title(s):
+    # replace smart quote characters
+    s = re.sub(ur'[\u2018\u2019]', "'", s)
+    s = re.sub(ur'[\u201C\u201D]', '"', s)
+    return s
+
 
 class CABillScraper(BillScraper):
     state = 'ca'
+
+    _tz = pytz.timezone('US/Pacific')
 
     def __init__(self, metadata, host='localhost', user='', pw='',
                  db='capublic', **kwargs):
@@ -47,7 +58,6 @@ class CABillScraper(BillScraper):
         else:
             chamber_name = 'ASSEMBLY'
 
-
         bills = self.session.query(CABill).filter_by(
             session_year=session).filter_by(
             measure_type=type_abbr)
@@ -62,15 +72,30 @@ class CABillScraper(BillScraper):
 
             fsbill = Bill(bill_session, chamber, bill_id, '')
 
+            # Construct session for web query, going from '20092010' to '0910'
+            source_session = session[2:4] + session[6:8]
+
+            # Turn 'AB 10' into 'ab_10'
+            source_num = "%s_%s" % (bill.measure_type.lower(),
+                                    bill.measure_num)
+
+            # Construct a fake source url
+            source_url = ("http://www.leginfo.ca.gov/cgi-bin/postquery?"
+                          "bill_number=%s&sess=%s" %
+                          (source_num, source_session))
+
+            fsbill.add_source(source_url)
+
             title = ''
             short_title = ''
             type = ['bill']
             subject = ''
-            for version in self.session.query(CABillVersion).filter_by(
-                bill=bill).filter(CABillVersion.bill_xml != None):
+            for version in bill.versions:
+                if not version.bill_xml:
+                    continue
 
-                title = version.title
-                short_title = version.short_title
+                title = clean_title(version.title)
+                short_title = clean_title(version.short_title)
                 type = [bill_type]
 
                 if version.appropriation == 'Yes':
@@ -84,14 +109,15 @@ class CABillScraper(BillScraper):
                 if version.taxlevy == 'Yes':
                     type.append('tax levy')
 
-                subject = version.subject
+                subject = clean_title(version.subject)
 
-                fsbill.add_version(version.bill_version_id, '',
-                                   date=version.bill_version_action_date,
-                                   title=version.title,
-                                   short_title=version.short_title,
-                                   subject=[subject],
-                                   type=type)
+                fsbill.add_version(
+                    version.bill_version_id, '',
+                    date=version.bill_version_action_date.date(),
+                    title=title,
+                    short_title=short_title,
+                    subject=[subject],
+                    type=type)
 
             if not title:
                 self.warning("Couldn't find title for %s, skipping" % bill_id)
@@ -141,10 +167,13 @@ class CABillScraper(BillScraper):
                 if 'Item veto' in act_str:
                     type.append('governor:vetoed:line-item')
 
+                if 'Vetoed by Governor' in act_str:
+                    type.append('governor:vetoed')
+
                 if not type:
                     type = ['other']
 
-                fsbill.add_action(actor, act_str, action.action_date,
+                fsbill.add_action(actor, act_str, action.action_date.date(),
                                   type=type)
 
             for vote in bill.votes:
@@ -195,7 +224,7 @@ class CABillScraper(BillScraper):
                     continue
 
                 fsvote = Vote(vote_chamber,
-                              vote.vote_date_time,
+                              self._tz.localize(vote.vote_date_time),
                               motion,
                               result,
                               int(vote.ayes),
@@ -214,6 +243,10 @@ class CABillScraper(BillScraper):
                         fsvote.no(record.legislator_name)
                     else:
                         fsvote.other(record.legislator_name)
+
+                # The abstain count field in CA's database includes
+                # vacancies, which we aren't interested in.
+                fsvote['other_count'] = len(fsvote['other_votes'])
 
                 fsbill.add_vote(fsvote)
 
