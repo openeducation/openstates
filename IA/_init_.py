@@ -1,5 +1,6 @@
 metadata = {
-	'state_name': 'Iowa'
+	'state_name': 'Iowa',
+	abbreviation='ia',
 	'legislature_name': 'The Iowa Legislature',
     'lower_chamber_name': 'House',
     'upper_chamber_name': 'Senate',
