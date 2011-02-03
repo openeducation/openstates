@@ -1,4 +1,4 @@
-metadata = {
+metadata = dict {
 	'state_name': 'Iowa',
 	abbreviation='ia',
 	'legislature_name': 'The Iowa Legislature',
